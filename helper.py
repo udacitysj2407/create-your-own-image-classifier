@@ -17,12 +17,7 @@ import numpy as np
 
 
 arch = {"vgg16":25088,"densenet121" :1024}
-
-
-# In[ ]:
-
-
-def load_data(path_part): 
+def load_data(): 
     data_dir = 'flowers'
     train_dir = data_dir + '/train'
     valid_dir = data_dir + '/valid'
@@ -51,12 +46,7 @@ def load_data(path_part):
     trainloader = torch.utils.data.DataLoader(train_data, batch_size=64, shuffle=True)
     testloader = torch.utils.data.DataLoader(test_data, batch_size=32)
     validationloader=torch.utils.data.DataLoader(validation_data, batch_size=32)
-    return trainloader, validationloader, testloader
-
-
-# In[ ]:
-
-
+    return train_data,trainloader, validationloader, testloader
 def nn_architecture(architecture, dropout , fc2, learn_r, gpu_cpu):
     if architecture == 'vgg16':
         model = models.vgg16(pretrained=True)
@@ -82,83 +72,72 @@ def nn_architecture(architecture, dropout , fc2, learn_r, gpu_cpu):
         optimizer = optim.Adam(model.classifier.parameters(), lr = learn_r)
 
     return model, optimizer, criterion
-
-
-# In[ ]:
-
-
-def train_network(model, criterion, optimizer, loader, validationloader, epoch, val_step, gpu_cpu):
+def train_network(model, criterion, optimizer, trainloader, validationloader, epoch, val_step, gpu_cpu):
     model.to('cuda')
-    for e in range(epochs):
-    running_loss = 0
-    for ii, (inputs, labels) in enumerate(trainloader):
-        steps += 1
-        
-        inputs, labels = inputs.to('cuda'), labels.to('cuda')
-        optimizer.zero_grad()
-        outputs = model.forward(inputs)
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
-        
-        running_loss += loss.item()
-        if steps % val_step == 0:
-            model.eval()
-            validation_loss = 0
-            validation_accuracy = 0
-            
-            for ii, (inputs2,labels2) in enumerate(validationloader):
-                optimizer.zero_grad()
+    steps=0
+    for e in range(epoch):
+        running_loss = 0
+        for ii, (inputs, labels) in enumerate(trainloader):
+            steps += 1
+            inputs, labels = inputs.to('cuda'), labels.to('cuda')
+            optimizer.zero_grad()
+            outputs = model.forward(inputs)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+            running_loss += loss.item()
+            if steps % val_step == 0:
+                model.eval()
+                validation_loss = 0
+                validation_accuracy = 0
+                validation_loss = validation_loss / len(validationloader)
+                for ii, (inputs2,labels2) in enumerate(validationloader):
+                    optimizer.zero_grad()
+                    inputs2, labels2 = inputs2.to('cuda:0') , labels2.to('cuda:0')
+                    model.to('cuda:0')
+                    with torch.no_grad():
+                        outputs = model.forward(inputs2)
+                        validation_loss = criterion(outputs,labels2)
+                        ps = torch.exp(outputs).data
+                        equality = (labels2.data == ps.max(1)[1])
+                        validation_accuracy += equality.type_as(torch.FloatTensor()).mean()
+                validation_loss = validation_loss / len(validationloader)
+                validation_accuracy = validation_accuracy / len(validationloader)
+                print("Epoch: {}/{}... ".format(e+1, epoch),
+                      "Loss: {:.4f}".format(running_loss/val_step),
+                      "Validation Loss {:.4f}".format(validation_loss),
+                      "Validation Accuracy: {:.2f}".format(validation_accuracy))
+                train_loss = 0
                 
-                inputs2, labels2 = inputs2.to('cuda:0') , labels2.to('cuda:0')
-                model.to('cuda:0')
-                with torch.no_grad():    
-                    outputs = model.forward(inputs2)
-                    validation_loss = criterion(outputs,labels2)
-                    ps = torch.exp(outputs).data
-                    equality = (labels2.data == ps.max(1)[1])
-                    validation_accuracy += equality.type_as(torch.FloatTensor()).mean()
-            
-            validation_loss = validation_loss / len(validationloader)
-            validation_accuracy = validation_accuracy / len(validationloader)
-       
-            print("Epoch: {}/{}... ".format(e+1, epochs),
-                  "Loss: {:.4f}".format(running_loss/val_step),
-                   "Validation Loss {:.4f}".format(validation_loss),
-                   "Validation Accuracy: {:.2f}".format(validation_accuracy))
-
-
-# In[ ]:
-
-
-def save_checkpoint(filepath , architecture, dropout, learn_r, fc2, epochs):
+def save_checkpoint(filepath , architecture,model, optimizer,train_data, dropout, learn_r, fc2, epochs):
     model.class_to_idx = train_data.class_to_idx
-    #epochs=5
-    checkpoint = ({'Pretrained': models.vgg16(pretrained=True),
+    model.epochs = epochs
+    model.cpu
+    checkpoint = ({'structure': architecture,
                'state_dict': model.state_dict(), 
-               'class_to_idx': model.class_to_idx,
-               'optimizer_state_dict': optimizer.state_dict(),
-               'epochs': epochs, 
+               'dropout':dropout,    
+               'lr':learn_r,
+               'fc2':fc2,
+               'optimizer_dict': optimizer.state_dict(),
+               'epochs': epochs,
+               'class_to_idx':model.class_to_idx,    
                'classifier': model.classifier})
     torch.save(checkpoint, 'checkpoint.pth')
     print ('model saved')
-
-
-# In[ ]:
-
-
-def load_checkpoint_rebuild_model(filepath='checkpoint.pth'):
-    checkpoint = torch.load(filepath)
-    model = checkpoint['Pretrained'] 
-    model.classifier = checkpoint['classifier'] 
+def load_checkpoint_rebuild_model(checkpoint):
+    checkpoint = torch.load(checkpoint)
+    architecture = checkpoint['structure']
+    dropout = checkpoint['dropout']
+    learn_r = checkpoint['lr']
+    fc2 = checkpoint['fc2']
+    class_to_idx = checkpoint['class_to_idx']
+    epochs = checkpoint['epochs']
+    state_dict = checkpoint['state_dict']
+    optimizer_dict = checkpoint['optimizer_dict']
+    model,_,_ = nn_architecture(architecture, dropout, fc2, learn_r, 'gpu')
+    model.class_to_idx = checkpoint['class_to_idx']
     model.load_state_dict(checkpoint['state_dict'])
-    model.class_to_idx=checkpoint['class_to_idx']
     return model
-
-
-# In[ ]:
-
-
 def process_image(image):
     img = Image.open(image)
     transformations = transforms.Compose([transforms.Resize(256),
@@ -168,21 +147,17 @@ def process_image(image):
                                                              [0.229, 0.224, 0.225])])
     processed_img = transformations(img)
     return(processed_img)
-
-
-# In[ ]:
-
-
-def predict(image_path, model, topk, gpu_cpu):
-    if torch.cuda.is_available() and gpu_cpu == 'gpu':
-        model.to('cuda:0')
-
-    img = process_image(image_path)
-    img = img.unsqueeze(0)
-    img = img.float()
+def predict(filepath, model, topk, gpu_cpu):
+    img_torch = process_image(filepath)
+    img_torch = img_torch.unsqueeze_(0)
+    img_torch = img_torch.float()
     if gpu_cpu == 'gpu':
         with torch.no_grad():
-            output = model.forward(img.cuda())
-    probability = F.softmax(output.data, dim = 1)
+            output = model.forward(img_torch.cuda())
+    else:
+        with torch.no_grad():
+            output=model.forward(img_torch)
+
+    probability = F.softmax(output.data,dim=1)
     return probability.topk(topk)
 

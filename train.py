@@ -29,16 +29,16 @@ gpu_cpu = pa.gpu_cpu
 epoch_num = pa.epoch_num
 
 # load the data - data_load() from help.py
-trainloader, validationloader, testloader = hp.load_data(data_path)
+train_data,trainloader, validationloader, testloader= hp.load_data()
 
 # build model
-model, optimizer, criterion = hp.nn_architecture(architecture, dropout, fc2, learn_r)
+model, optimizer, criterion = hp.nn_architecture(architecture, dropout, fc2, learn_r, gpu_cpu)
 
 # train model
 hp.train_network(model, criterion, optimizer, trainloader, validationloader, epoch_num, 20, gpu_cpu)
 
 # checkpoint the model
-hp.save_checkpoint(filepath, architecture, dropout, learn_r, fc2, epoch_num)
+hp.save_checkpoint(filepath, architecture,model,optimizer,train_data,dropout, learn_r, fc2, epoch_num)
 
 print("model has been successfully trained")
 
